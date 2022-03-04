@@ -1,0 +1,80 @@
+Shader "Rim/FresRim"
+{
+    Properties
+    {
+        [NoScaleOffset]_MatcapTex ("Matcap Tex", 2D) = "White"{}
+        _MinRange ("MinRange", Range(0, 1)) = 0 
+        _MaxRange ("MaxRange", Range(0, 1)) = 1
+        _Pow ("Power", Float) = 5
+        [HDR]_RimCol ("Rim Color", Color) = (1, 1, 1, 1)
+    }
+    SubShader
+    {
+        Tags 
+        { 
+            "RenderType" = "Opaque" 
+        }
+        LOD 100
+
+        Pass
+        {
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #include "UnityCG.cginc"
+
+            struct appdata
+            {
+                float4 vertex : POSITION;
+                float2 texcoord : TEXCOORD0;
+                float3 normal : NORMAL;
+            };
+
+            struct v2f
+            {
+                float2 uv : TEXCOORD0;
+                float4 pos : SV_POSITION;
+                float3 wPos : TEXCOORD1;
+                float3 wNor : TEXCOORD2;
+            };
+
+            sampler2D _CameraDepthTexture;
+            float _Width;
+            float _MinRange, _MaxRange, _Pow;
+            sampler2D _MatcapTex;
+            float4 _RimCol;
+
+            v2f vert (appdata v)
+            {
+                v2f o;
+                o.pos = UnityObjectToClipPos(v.vertex);
+                o.uv = v.texcoord;
+                o.wPos = mul(unity_ObjectToWorld, v.vertex).xyz;//world pos 
+                o.wNor = UnityObjectToWorldNormal(v.normal);//world norml
+                return o;
+            }
+
+            fixed4 frag (v2f i) : SV_Target
+            {
+                //world normal 
+                float3 wNor = normalize(i.wNor);
+                //view dir 
+                float3 vDir = normalize(_WorldSpaceCameraPos.xyz - i.wPos);
+                //fresnel 
+                float NdotV = saturate(dot(wNor, vDir));
+                float fresnel = pow((1 - NdotV), max(0.01, _Pow));
+                fresnel = smoothstep(min(0.99, _MinRange), _MaxRange, fresnel);
+                //view normal 
+                float3 vNor = mul(UNITY_MATRIX_V, float4(wNor, 0.0)).xyz;
+                //matcap tex 
+                float2 matcapUV = (vNor.xy + 1) / 2;
+                float4 matcapTex = tex2D(_MatcapTex, matcapUV);
+                fixed4 col = 1;
+                col.xyz = matcapTex.xyz + fresnel * _RimCol.xyz;
+                return col;
+            }
+            ENDCG
+        }
+    }
+    FallBack "Diffuse"
+}
