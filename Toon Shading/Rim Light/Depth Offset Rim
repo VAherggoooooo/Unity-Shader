@@ -1,0 +1,82 @@
+Shader "Rim/DepthRim"
+{
+    Properties
+    {
+        [NoScaleOffset]_MatcapTex ("Matcap Tex", 2D) = "White"{}
+        _Width ("Width", Float) = 0
+        _MinRange ("MinRange", Range(0, 1)) = 0 
+        _MaxRange ("MaxRange", Range(0, 1)) = 1
+        _Spread ("Spread", Float) = 1
+        [HDR]_RimCol ("Rim Color", Color) = (1, 1, 1, 1)
+    }
+    SubShader
+    {
+        Tags 
+        { 
+            "RenderType" = "Opaque" 
+        }
+        LOD 100
+
+        Pass
+        {
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #include "UnityCG.cginc"
+
+            struct appdata
+            {
+                float4 vertex : POSITION;
+                float2 texcoord : TEXCOORD0;
+                float3 normal : NORMAL;
+            };
+
+            struct v2f
+            {
+                float2 uv : TEXCOORD0;
+                float4 pos : SV_POSITION;
+                float4 scrPos : TEXCOORD1;
+                float3 wNor : TEXCOORD2;
+            };
+
+            sampler2D _CameraDepthTexture;
+            float _Width;
+            float _MinRange, _MaxRange, _Spread;
+            sampler2D _MatcapTex;
+            float4 _RimCol;
+
+            v2f vert (appdata v)
+            {
+                v2f o;
+                o.pos = UnityObjectToClipPos(v.vertex);
+                o.uv = v.texcoord;
+                o.scrPos = ComputeScreenPos(o.pos);//screen pos 
+                o.wNor = UnityObjectToWorldNormal(v.normal);//world norml
+                return o;
+            }
+
+            fixed4 frag (v2f i) : SV_Target
+            {
+                //world normal 
+                float3 wNor = normalize(i.wNor);
+                //view normal 
+                float3 vNor = mul(UNITY_MATRIX_V, float4(wNor, 0.0)).xyz;
+                //screen pos 
+                float2 scrPos = i.scrPos.xy / i.scrPos.w;
+                scrPos += vNor.xy * _Width * 0.001;//uv offset 
+                float depthTex = SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture, scrPos);
+                float depth = LinearEyeDepth(depthTex);//view space depth 
+                float rim = saturate((depth - i.scrPos.w) / max(0.001, _Spread * 0.01));//稍作缩放, 可以不要
+                rim = smoothstep(min(_MinRange, 0.99), _MaxRange, rim);
+                //matcap tex 
+                float2 matcapUV = (vNor.xy + 1) / 2;
+                float4 matcapTex = tex2D(_MatcapTex, matcapUV);
+                fixed4 col = 1;
+                col.xyz = matcapTex.xyz + rim * _RimCol.xyz;
+                return col;
+            }
+            ENDCG
+        }
+    }
+    FallBack "Diffuse"
+}
