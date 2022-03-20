@@ -1,0 +1,159 @@
+#ifndef VOLUME_SHADER_FUNCTION
+#define VOLUME_SHADER_FUNCTION
+
+sampler3D _NoiseTex;
+float _NoiseSize;
+float _Thickness;
+float4x4 _VPMatrix_invers;
+float4 _Col1, _Col2;
+float3 _lightPos, _lightCol;
+float _LightAbsorption;
+float _DarknessThreshold;
+
+//marching ray
+struct Ray
+{
+    float3 startPos;
+    float3 dir;    
+    float rayStep;
+    float stepCount;
+};
+inline Ray SetRay(in float3 s, in float3 d, in float st, in float c)
+{
+    Ray r;
+    r.startPos = s;
+    r.dir = d;
+    r.rayStep = st;
+    r.stepCount = c;
+    return r;
+}
+
+//cloud bounding box
+struct BoundBox
+{
+    float3 boxMin;
+    float3 boxMax;
+};
+inline BoundBox SetBox(in float3 bmin, in float3 bmax)
+{
+    BoundBox b;
+    b.boxMin = bmin;
+    b.boxMax = bmax;
+    return b;
+}
+
+//intersection time 
+struct IntersectionTime
+{
+    float minT;
+    float maxT;
+};
+inline IntersectionTime GetIntersectionTime(BoundBox box, Ray ray, inout float insideTime)
+{
+    IntersectionTime finalT;
+    float3 t0 = (box.boxMin - ray.startPos) / ray.dir;
+    float3 t1 = (box.boxMax - ray.startPos) / ray.dir;
+    float3 tmin = min(t0, t1);
+    float3 tmax = max(t0, t1);
+    
+    finalT.minT = max(max(tmin.x, tmin.y), tmin.z);
+    finalT.minT = max(0, finalT.minT);
+    finalT.maxT = min(min(tmax.x, tmax.y), tmax.z);//离开时间    
+    insideTime = max(0, finalT.maxT - finalT.minT); //在盒中的时间
+    
+    return finalT;
+}
+
+//采样3D贴图
+inline float SampleDensity(float3 rayPos)
+{
+    float3 uvw = rayPos * _NoiseSize;
+    float4 shapeNoise = tex3Dlod(_NoiseTex, float4(uvw, 0));
+    return shapeNoise.r;
+}
+
+
+inline void SetLightingData(float3 pos, float3 col)
+{
+    _lightPos = pos;
+    _lightCol = col;
+}
+inline float3 LightMarching(float3 pos, BoundBox box)
+{
+    float3 lDir = normalize(_lightPos);
+    Ray ray;
+    ray = SetRay(pos, lDir, 1, 1);
+    float inboxTime;
+    IntersectionTime t = GetIntersectionTime(box, ray, inboxTime);
+    ray.rayStep = inboxTime / 8;
+    ray.stepCount = 8;
+    
+    float3 curPos = pos;
+    float density = 0;
+    
+    for (int c = 0; c < ray.stepCount; c++)
+    {
+        density += max(0, SampleDensity(curPos));
+        curPos += ray.rayStep * lDir;
+    }
+    float transmittance = exp(-density * _LightAbsorption);
+    float3 cloudCol = lerp(_Col1.xyz, _lightCol, saturate(transmittance));
+    cloudCol = lerp(_Col2.xyz, cloudCol, saturate(pow(transmittance, 3)));
+
+    return _DarknessThreshold + transmittance * (1 - _DarknessThreshold) * cloudCol;
+
+}
+
+//volume cloud ray marching
+inline float GetRayMarchingCloud(in Ray ray, in BoundBox box, in float blockDis)
+{
+    float inboxTime;
+    IntersectionTime t = GetIntersectionTime(box, ray, inboxTime);
+    float cloud = 0;
+    
+    //与包围盒没有交点
+    if (t.maxT <= 0 || t.minT < 0 || inboxTime <= 0)
+        return cloud;
+    
+    float disLimit = min(blockDis - t.minT, inboxTime); //遮挡
+    if (disLimit <= 0)
+        return cloud;
+    
+    float3 stepDir = ray.dir * ray.rayStep;
+    float3 curPos = ray.startPos + t.minT * ray.dir; //假设起点挪到第一个相交点
+    float curDis = 0;
+    
+    for (int c = 0; c < ray.stepCount; c++)
+    {      
+        if (curDis < inboxTime)
+        {            
+            float noise = SampleDensity(curPos);
+            if (noise > 0)
+            {
+                cloud += pow(noise, 5) * _Thickness;
+
+            }
+        }
+        curDis += ray.rayStep;
+        curPos += stepDir;
+    }    
+
+    return cloud;
+}
+
+
+//get world pos from depthTexture
+inline float4 GetWorldPos(float d, float2 uv)
+{
+    //手动处理一些问题
+#if defined(UNITY_REVERSED_Z)
+                d = 1 - d;
+#endif
+    float4 ndc = float4(uv.xy * 2 - 1, d * 2 - 1, 1);
+
+    float4 wPos = mul(_VPMatrix_invers, ndc);
+    wPos /= wPos.w;
+    
+    return wPos;
+}
+#endif
