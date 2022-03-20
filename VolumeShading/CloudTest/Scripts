@@ -1,0 +1,85 @@
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+
+[ExecuteInEditMode]
+[ImageEffectAllowedInSceneView]
+public class Post_VolumeCloud : MonoBehaviour
+{
+    public DepthTextureMode mode = DepthTextureMode.Depth;
+    [Min(0)] public float rayStep = 0.2f;
+    [Min(0)] public int stepCount = 256;
+    [Min(0)] public float thickness = 0.1f;
+    [Min(0)] public float noiseSize = 1;
+    public Transform cloudTrans;
+    public Texture3D noiseTex3D;
+
+    private Camera cam;
+    private Shader shader;
+    private Material mat;
+    private Vector3 boxMin, boxMax;
+
+    private void OnEnable()
+    {
+        if (cam == null)
+        {
+            cam = GetComponent<Camera>();
+        }
+        cam.depthTextureMode = mode;
+
+        if (shader == null)
+        {
+            shader = Shader.Find("Hidden/Post_VolumeCloud");
+            if(shader ==null)
+            {
+                enabled = false;
+                return;
+            }
+        }
+        
+        if (mat == null)
+        {
+            mat = new Material(shader);
+            mat.hideFlags = HideFlags.HideAndDontSave;
+        }
+    }
+
+    private void OnDisable()
+    {
+        DestroyImmediate(mat);
+        mat = null;
+    }
+
+    private void OnRenderImage(RenderTexture source, RenderTexture destination)
+    {
+        SetData();
+        Graphics.Blit(source, destination, mat);
+    }
+
+    private void SetData()
+    {
+        mat.SetFloat("_RayStep", rayStep * 0.01f);
+        mat.SetFloat("_StepCount", stepCount);
+        mat.SetFloat("_Thickness", thickness * 0.001f);
+        mat.SetFloat("_NoiseSize", noiseSize * 0.05f);
+
+
+        Matrix4x4 vp_Matrix = cam.projectionMatrix * cam.worldToCameraMatrix;
+        mat.SetMatrix("_VPMatrix_invers", vp_Matrix.inverse);
+
+        mat.SetTexture("_NoiseTex", noiseTex3D);
+
+        //云的包围盒
+        if (cloudTrans != null)
+        {
+            boxMin = cloudTrans.position - cloudTrans.localScale * 0.5f;
+            boxMax = cloudTrans.position + cloudTrans.localScale * 0.5f;
+
+            mat.SetVector("_BoxMin", boxMin);
+            mat.SetVector("_BoxMax", boxMax);
+        }
+
+
+    }
+}
